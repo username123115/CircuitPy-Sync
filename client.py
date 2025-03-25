@@ -13,6 +13,8 @@ CHAR_IO = '2'
 class CPSyncClient:
     def __init__(self):
         self.state = SS_COMMAND
+
+        os.chdir('/')
         self.directory = os.getcwd()
 
         self.exit_code = CHAR_GOOD
@@ -33,6 +35,8 @@ class CPSyncClient:
                 "ls": self.list_dir,
                 "cat": self.read,
                 "tw": self.wtransfer_begin,
+                "mkdir": self.mkdir,
+                "stat": self.stat,
                 }
 
         self.state_exits = {
@@ -145,6 +149,21 @@ class CPSyncClient:
 
     def calculate_checksum(self, data):
         return 0
+
+    def mkdir(self, dirname):
+        try:
+            os.mkdir(dirname)
+            return CHAR_GOOD
+        except OSError:
+            return CHAR_IO
+
+    def stat(self, fname):
+        try:
+            self.emit(" ".join(str(x) for x in os.stat(fname)) + "\n")
+            return CHAR_GOOD
+        except OSError:
+            return CHAR_IO
+
 
     def process_command(self, cmd : str):
         if (len(cmd) == 0):

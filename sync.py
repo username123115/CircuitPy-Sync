@@ -13,9 +13,11 @@ parser = argparse.ArgumentParser(
 parser.add_argument('--file', '-f', required = True)
 parser.add_argument('--destination', '-d', default='/')
 
-CHAR_GOOD = '0'
-CHAR_BAD = '1'
-CHAR_IO = '2'
+CHAR_GOOD = 0
+CHAR_BAD = 1
+CHAR_IO = 2
+
+MASK_DIR = 14
 
 def log(v):
     print(f"[*]{v}")
@@ -36,11 +38,6 @@ def reset():
 def start_client():
     ser.write(STUB)
 
-def copy_directory(path, target_path):
-    if os.path.isdir(path):
-        d = os.listdir(path)
-        for file in d:
-            copy_directory(os.path.join(path, file), os.path.join(target_path, file))
 
 
 def read_response(s : serial.Serial):
@@ -57,38 +54,93 @@ def read_response(s : serial.Serial):
     log(response)
     return err, response
 
-def jank():
+def setup():
     reset()
     start_client()
     log(ser.readline())
     log(ser.readline())
     log(ser.readline())
 
-def write_file(s : serial.Serial, name : str, content : bytes):
-    command = f'tw {name}\r'.encode('ascii')
-
+def cmd(name : str, *args):
+    r = " ".join(args)
+    command = f'{name} {r}\r'.encode('ascii')
     print(command)
     ser.write(command)
-    read_response(ser)
-    
-    meta = f'{len(content)} 0\r'.encode('ascii')
+    return read_response(ser)
+
+def tw(name : str):
+    return cmd('tw', name)
+
+def stat(name : str):
+    return cmd('stat', name)
+
+def mkdir(name : str):
+    return cmd('mkdir', name)
+
+def send_metadata(block_size : int, checksum : int = 0):
+    meta = f'{block_size} {checksum}\r'.encode('ascii')
     ser.write(meta)
-    read_response(ser)
+    return read_response(ser)
 
-    ser.write(content)
-    read_response(ser)
+def send_raw(data):
+    ser.write(data)
+    return read_response(ser)
 
-    ser.write(b'0 0\r')
-    read_response(ser)
+def write_file(s : serial.Serial, name : str, file : str):
+    with open(file, 'rb') as f:
+        content = f.read()
+
+    tw(name)
+    send_metadata(len(content), 0)
+    send_raw(content)
+    send_metadata(0, 0)
+
+def copy_directory(source, target_path):
+    print(source, target_path)
+
+    if os.path.isdir(source):
+        # Make this directory
+        dirname = target_path
+        if dirname[-1] == '/':
+            dirname = dirname[:-1]
+
+        code, _ = mkdir(dirname)
+        if code != CHAR_GOOD:
+            code, r = stat(dirname)
+            if code != CHAR_GOOD:
+                raise ValueError(f"Unable to create directory {dirname} on target, mkdir failed")
+            t = int(r.split(' ')[0])
+            if ((t >> MASK_DIR) & 1):
+                log(f"Directory {dirname} already exists, skipping")
+            else:
+                raise ValueError(f"Unable to create directory {dirname} on target, already exists as a file")
+
+
+        # Continue down other files
+        files = os.listdir(source)
+        for file in files:
+            print(file)
+            copy_directory(os.path.join(source, file), os.path.join(target_path, file))
+    else:
+        filename = target_path
+        write_file(ser, filename, source)
+
+
 
 if __name__ == '__main__':
     args = parser.parse_args()
-    with open(args.file, 'rb') as f:
-        c = f.read()
 
-    jank()
+    target_dir = args.destination
+    if not os.path.exists(args.file):
+        raise ValueError("Files to sync should exist")
+    if os.path.isdir(args.file):
+        target_dir = os.path.join(target_dir, os.path.dirname(args.file))
+        print(args.file)
+
+    setup()
     print("+++")
-    write_file(ser, os.path.join(args.destination, os.path.basename(args.file)), c)
+    copy_directory(args.file, target_dir)
+    #write_file(ser, os.path.join(target_dir, os.path.basename(args.file)), args.file)
     #ser.write(b'tw linux.txt\r')
     #read_response(ser)
 
